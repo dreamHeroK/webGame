@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { MONSTER_TYPES, getMonsterStats } from '../data/monsters'
 import { EQUIPMENT_SLOTS, generateEquipment } from '../data/equipment'
 import { getBossForStage, getBossStats, MONSTERS_PER_BOSS } from '../data/bosses'
-import { SKILL_LIST, SKILL_MAP, getRandomSkillDrop, SKILL_DROP_RATE } from '../data/skills'
+import { SKILL_LIST, SKILL_MAP, getRandomSkillDrop, SKILL_DROP_RATE, SKILL_TYPE } from '../data/skills'
+import { getCheckInReward, canCheckIn, getConsecutiveDays } from '../data/dailyCheckIn'
 
 // 背包最大容量
 const MAX_INVENTORY_SIZE = 100
@@ -14,7 +15,7 @@ const EQUIPMENT_DROP_RATE = 1
 const BASE_PLAYER_HP = 100
 const BASE_CRIT_RATE = 5
 const BASE_CRIT_DAMAGE = 150
-const MAX_EQUIPPED_SKILLS = 3
+const BASE_MAX_EQUIPPED_SKILLS = 3
 const BOSS_MINION_COUNT = 2
 
 const randomMonsterType = () =>
@@ -212,7 +213,33 @@ const initialState = {
   cheatBonus: {
     attack: 0,
     defense: 0
-  }
+  },
+  // 签到系统
+  checkIn: {
+    lastCheckInDate: null,
+    consecutiveDays: 0,
+    totalCheckIns: 0,
+    bonus: {
+      attack: 0,
+      defense: 0,
+      hp: 0,
+      critRate: 0,
+      critDamage: 0
+    }
+  },
+  // 技能系统
+  skillCooldowns: {}, // { skillId: remainingCooldown }
+  skillSlots: BASE_MAX_EQUIPPED_SKILLS, // 技能槽位数量（可通过签到增加）
+  // 战斗状态
+  enemySkipTurns: {}, // { enemyId: skipCount } 控制技能效果
+  enemySkillCooldowns: {}, // { enemyId: { skillId: cooldown } } 怪物技能冷却
+  // 在线时间跟踪
+  onlineTime: 0, // 累计在线时间（秒）
+  lastOnlineTime: null, // 最后在线时间戳
+  canRevive: false, // 是否可以复活（在线30分钟后）
+  // 离线挂机
+  lastOfflineTime: null, // 最后离线时间
+  offlineRewards: null // 离线收益 { exp, equipment, skills, monstersKilled }
 }
 
 export const useGameState = () => {
@@ -245,7 +272,17 @@ export const useGameState = () => {
             : initialState.autoAdvance,
         currentEnemies: parsed.currentEnemies || (parsed.currentMonster ? [parsed.currentMonster] : []),
         skillsInventory: parsed.skillsInventory || initialState.skillsInventory,
-        equippedSkills: parsed.equippedSkills || initialState.equippedSkills
+        equippedSkills: parsed.equippedSkills || initialState.equippedSkills,
+        checkIn: parsed.checkIn || initialState.checkIn,
+        skillCooldowns: parsed.skillCooldowns || initialState.skillCooldowns,
+        skillSlots: parsed.skillSlots || initialState.skillSlots,
+        enemySkipTurns: parsed.enemySkipTurns || initialState.enemySkipTurns,
+        enemySkillCooldowns: parsed.enemySkillCooldowns || initialState.enemySkillCooldowns,
+        onlineTime: parsed.onlineTime || initialState.onlineTime,
+        lastOnlineTime: parsed.lastOnlineTime || initialState.lastOnlineTime,
+        canRevive: parsed.canRevive || initialState.canRevive,
+        lastOfflineTime: parsed.lastOfflineTime || initialState.lastOfflineTime,
+        offlineRewards: parsed.offlineRewards || initialState.offlineRewards
       }
     }
     return initialState
@@ -255,6 +292,73 @@ export const useGameState = () => {
   useEffect(() => {
     localStorage.setItem('gameState', JSON.stringify(gameState))
   }, [gameState])
+
+  // 在线时间跟踪
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setGameState(prev => {
+        const newOnlineTime = (prev.onlineTime || 0) + 1
+        const canRevive = newOnlineTime >= 1800 // 30分钟 = 1800秒
+        
+        return {
+          ...prev,
+          onlineTime: newOnlineTime,
+          lastOnlineTime: Date.now(),
+          canRevive: canRevive || prev.canRevive // 一旦达到30分钟，保持可复活状态
+        }
+      })
+    }, 1000) // 每秒更新一次
+
+    return () => clearInterval(interval)
+  }, [])
+
+  // 检查离线收益（组件加载时）
+  useEffect(() => {
+    setGameState(prev => {
+      const lastOffline = prev.lastOfflineTime
+      if (!lastOffline) {
+        // 首次加载，记录当前时间
+        return {
+          ...prev,
+          lastOfflineTime: Date.now()
+        }
+      }
+
+      const now = Date.now()
+      const offlineSeconds = Math.floor((now - lastOffline) / 1000)
+      
+      // 如果离线时间超过1分钟，计算离线收益
+      if (offlineSeconds > 60) {
+        const offlineMinutes = Math.floor(offlineSeconds / 60)
+        const maxOfflineMinutes = Math.min(offlineMinutes, 1440) // 最多24小时
+        
+        const stage = prev.currentStage || 1
+        const playerLevel = prev.playerLevel || 1
+        
+        // 计算离线收益
+        // 假设离线时每分钟击杀1个怪物
+        const monstersKilled = maxOfflineMinutes
+        const expGain = monstersKilled * getExperienceReward(stage, false)
+        const equipmentDrops = Math.floor(monstersKilled * 0.3) // 30%掉落率
+        
+        const offlineRewards = {
+          exp: expGain,
+          equipment: equipmentDrops,
+          skills: Math.floor(monstersKilled * SKILL_DROP_RATE),
+          monstersKilled: monstersKilled,
+          offlineMinutes: maxOfflineMinutes
+        }
+        
+        return {
+          ...prev,
+          offlineRewards,
+          lastOfflineTime: now
+        }
+      }
+      
+      return prev
+    })
+  }, []) // 只在组件加载时执行一次
 
   // 计算玩家总属性
   const calculatePlayerStats = useCallback((state) => {
@@ -303,9 +407,19 @@ export const useGameState = () => {
       totalDefense += state.cheatBonus.defense || 0
     }
 
+    // 签到奖励加成
+    if (state.checkIn && state.checkIn.bonus) {
+      totalAttack += state.checkIn.bonus.attack || 0
+      totalDefense += state.checkIn.bonus.defense || 0
+      bonusHp += state.checkIn.bonus.hp || 0
+      bonusCritRate += state.checkIn.bonus.critRate || 0
+      bonusCritDamage += state.checkIn.bonus.critDamage || 0
+    }
+
+    // 被动技能加成（只计算被动技能）
     ;(state.equippedSkills || []).forEach(skillId => {
       const skill = SKILL_MAP[skillId]
-      if (skill && skill.effects) {
+      if (skill && skill.type === SKILL_TYPE.PASSIVE && skill.effects) {
         const effects = skill.effects
         totalAttack += effects.attack || 0
         totalDefense += effects.defense || 0
@@ -426,13 +540,11 @@ export const useGameState = () => {
       if (!prev.skillsInventory?.[skillId]) return prev
       const equipped = prev.equippedSkills || []
       if (equipped.includes(skillId)) return prev
-      let nextEquipped = [...equipped, skillId]
-      if (nextEquipped.length > MAX_EQUIPPED_SKILLS) {
-        nextEquipped = nextEquipped.slice(nextEquipped.length - MAX_EQUIPPED_SKILLS)
-      }
+      const maxSlots = prev.skillSlots || BASE_MAX_EQUIPPED_SKILLS
+      if (equipped.length >= maxSlots) return prev
       return {
         ...prev,
-        equippedSkills: nextEquipped
+        equippedSkills: [...equipped, skillId]
       }
     })
   }, [])
@@ -675,63 +787,119 @@ export const useGameState = () => {
 
   const performPlayerAttack = useCallback((prev) => {
     const enemies = cloneEnemies(prev.currentEnemies || [])
-    const target = prev.currentMonster || enemies.find(enemy => enemy.hp > 0)
-    if (!target) {
+    const aliveEnemies = enemies.filter(enemy => enemy.hp > 0)
+    if (aliveEnemies.length === 0) {
       return prev
     }
 
-    const targetIndex = enemies.findIndex(enemy => enemy.id === target.id)
-    if (targetIndex === -1) {
-      return {
-        ...prev,
-        currentMonster: enemies.find(enemy => enemy.hp > 0) || null,
-        currentEnemies: enemies
-      }
-    }
-
     const playerStats = calculatePlayerStats(prev)
-    const baseDamage = Math.max(1, playerStats.attack - target.defense)
-    const critChance = (playerStats.critRate || 0) / 100
-    const critDamageMultiplier = (playerStats.critDamage || 150) / 100
-    const didCrit = Math.random() < critChance
-    const damage = Math.max(
-      1,
-      Math.floor(baseDamage * (didCrit ? critDamageMultiplier : 1))
-    )
-    const newHp = Math.max(0, target.hp - damage)
-    enemies[targetIndex] = { ...target, hp: newHp }
-
+    
+    // 检查是否有多重箭被动技能
+    const multiShotSkill = (prev.equippedSkills || []).find(skillId => {
+      const skill = SKILL_MAP[skillId]
+      return skill && skill.type === SKILL_TYPE.PASSIVE && skill.effects?.multiTarget
+    })
+    
+    const multiTargetCount = multiShotSkill 
+      ? (SKILL_MAP[multiShotSkill].effects.multiTargetCount || 3)
+      : 1
+    
+    // 选择目标（多重箭攻击多个目标）
+    const targets = aliveEnemies.slice(0, multiTargetCount)
+    const primaryTarget = targets[0]
+    
+    let totalDamage = 0
+    let logMessages = []
+    
+    // 对每个目标造成伤害
+    targets.forEach(target => {
+      const targetIndex = enemies.findIndex(enemy => enemy.id === target.id)
+      if (targetIndex === -1) return
+      
+      const baseDamage = Math.max(1, playerStats.attack - target.defense)
+      const critChance = (playerStats.critRate || 0) / 100
+      const critDamageMultiplier = (playerStats.critDamage || 150) / 100
+      const didCrit = Math.random() < critChance
+      const damage = Math.max(
+        1,
+        Math.floor(baseDamage * (didCrit ? critDamageMultiplier : 1))
+      )
+      
+      const newHp = Math.max(0, target.hp - damage)
+      enemies[targetIndex] = { ...target, hp: newHp }
+      totalDamage += damage
+      
+      logMessages.push(
+        `你对${target.name}造成了${damage}点伤害${didCrit ? ' (暴击!)' : ''}！`
+      )
+    })
+    
+    // 更新技能冷却（每回合减少1）
+    const newCooldowns = { ...(prev.skillCooldowns || {}) }
+    Object.keys(newCooldowns).forEach(skillId => {
+      if (newCooldowns[skillId] > 0) {
+        newCooldowns[skillId] = Math.max(0, newCooldowns[skillId] - 1)
+      }
+    })
+    
     let newState = {
       ...prev,
       currentEnemies: enemies,
-      currentMonster: enemies[targetIndex],
-      battleLog: appendLog(
-        prev.battleLog,
-        `你对${target.name}造成了${damage}点伤害${
-          didCrit ? ' (暴击!)' : ''
-        }！`
-      )
+      currentMonster: enemies.find(enemy => enemy.hp > 0) || null,
+      skillCooldowns: newCooldowns,
+      battleLog: appendLog(prev.battleLog, ...logMessages)
     }
-
-    if (newHp <= 0) {
-      newState = handleEnemyDefeat(
-        newState,
-        enemies[targetIndex],
-        enemies,
-        playerStats
+    
+    // 检查是否有敌人被击败
+    enemies.forEach(enemy => {
+      if (enemy.hp <= 0 && enemy.hp !== -1) {
+        enemy.hp = -1 // 标记为已处理
+        newState = handleEnemyDefeat(newState, enemy, enemies, playerStats)
+      }
+    })
+    
+    // 怪物反击（检查是否跳过回合）
+    const skipTurns = prev.enemySkipTurns || {}
+    const shouldSkipTurn = skipTurns[primaryTarget?.id] > 0
+    
+    if (shouldSkipTurn) {
+      // 减少跳过回合数
+      const newSkipTurns = { ...skipTurns }
+      newSkipTurns[primaryTarget.id] = Math.max(0, newSkipTurns[primaryTarget.id] - 1)
+      if (newSkipTurns[primaryTarget.id] === 0) {
+        delete newSkipTurns[primaryTarget.id]
+      }
+      newState.enemySkipTurns = newSkipTurns
+      newState.battleLog = appendLog(
+        newState.battleLog,
+        `🐑 ${primaryTarget.name}被控制，跳过本回合！`
       )
-    } else {
-      const monsterBaseDamage = Math.max(1, target.attack - playerStats.defense)
-      const monsterCritChance = (target.critRate || 0) / 100
-      const monsterCritDamage = (target.critDamage || 150) / 100
+    } else if (primaryTarget && primaryTarget.hp > 0) {
+      // 正常反击
+      const monsterBaseDamage = Math.max(1, primaryTarget.attack - playerStats.defense)
+      const monsterCritChance = (primaryTarget.critRate || 0) / 100
+      const monsterCritDamage = (primaryTarget.critDamage || 150) / 100
       const monsterDidCrit = Math.random() < monsterCritChance
+      
+      // 检查怪物天生技能
+      const monsterType = MONSTER_TYPES.find(m => m.id === primaryTarget.typeId)
+      let finalMonsterDamage = monsterBaseDamage
+      if (monsterType?.innateSkill) {
+        const skill = monsterType.innateSkill
+        if (skill.trigger === 'attack' && Math.random() < (skill.chance || 0)) {
+          finalMonsterDamage = Math.floor(monsterBaseDamage * (skill.effect.damageMultiplier || 1))
+          newState.battleLog = appendLog(
+            newState.battleLog,
+            `⚡ ${primaryTarget.name}使用了${skill.name}！`
+          )
+        }
+      }
+      
       const monsterDamage = Math.max(
         1,
-        Math.floor(
-          monsterBaseDamage *
-            (monsterDidCrit ? monsterCritDamage : 1)
-        )
+        Math.floor(finalMonsterDamage * (monsterDidCrit ? monsterCritDamage : 1))
       )
+      
       const newPlayerHp = Math.max(
         0,
         (prev.playerHp ?? playerStats.maxHp) - monsterDamage
@@ -739,18 +907,24 @@ export const useGameState = () => {
       newState.playerHp = newPlayerHp
       newState.battleLog = appendLog(
         newState.battleLog,
-        `${target.name}对你造成了${monsterDamage}点伤害${
+        `${primaryTarget.name}对你造成了${monsterDamage}点伤害${
           monsterDidCrit ? ' (暴击!)' : ''
         }！`
       )
 
       if (newPlayerHp <= 0) {
+        const canRevive = newState.canRevive || false
         newState.battleLog = appendLog(
           newState.battleLog,
-          '💀 你被击败了！'
+          canRevive 
+            ? '💀 你被击败了！可以复活继续战斗！'
+            : '💀 你被击败了！在线30分钟后可复活继续战斗！'
         )
         newState.currentEnemies = []
         newState.currentMonster = null
+        newState.isAutoBattle = false
+        newState.isResting = true
+        newState.restProgress = 0
       }
     }
 
@@ -908,6 +1082,290 @@ export const useGameState = () => {
     }))
   }, [])
 
+  // 签到功能
+  const performCheckIn = useCallback(() => {
+    setGameState(prev => {
+      const checkIn = prev.checkIn || {}
+      const lastDate = checkIn.lastCheckInDate
+      
+      if (!canCheckIn(lastDate)) {
+        return prev // 今天已经签到过了
+      }
+      
+      const consecutiveDays = getConsecutiveDays(lastDate, checkIn.consecutiveDays || 0)
+      const reward = getCheckInReward(consecutiveDays)
+      
+      const newBonus = {
+        attack: (checkIn.bonus?.attack || 0) + reward.attack,
+        defense: (checkIn.bonus?.defense || 0) + reward.defense,
+        hp: (checkIn.bonus?.hp || 0) + reward.hp,
+        critRate: (checkIn.bonus?.critRate || 0) + reward.critRate,
+        critDamage: (checkIn.bonus?.critDamage || 0) + reward.critDamage
+      }
+      
+      const newSkillSlots = (prev.skillSlots || BASE_MAX_EQUIPPED_SKILLS) + reward.skillSlot
+      
+      return {
+        ...prev,
+        checkIn: {
+          lastCheckInDate: new Date().toISOString(),
+          consecutiveDays,
+          totalCheckIns: (checkIn.totalCheckIns || 0) + 1,
+          bonus: newBonus
+        },
+        skillSlots: newSkillSlots,
+        battleLog: appendLog(
+          prev.battleLog,
+          `📅 签到成功！连续签到 ${consecutiveDays} 天！` +
+          (consecutiveDays % 7 === 0 ? ' 🎁 获得7天奖励！' : '') +
+          (consecutiveDays % 30 === 0 ? ' 🎉 获得30天奖励！技能槽位+1！' : '')
+        )
+      }
+    })
+  }, [])
+
+  // 释放主动技能
+  const castActiveSkill = useCallback((skillId, targetEnemyId = null) => {
+    setGameState(prev => {
+      const skill = SKILL_MAP[skillId]
+      if (!skill || skill.type !== SKILL_TYPE.ACTIVE) return prev
+      
+      // 检查是否装备了该技能
+      if (!prev.equippedSkills?.includes(skillId)) return prev
+      
+      // 检查冷却时间
+      const cooldown = prev.skillCooldowns?.[skillId] || 0
+      if (cooldown > 0) return prev
+      
+      const playerStats = calculatePlayerStats(prev)
+      const enemies = cloneEnemies(prev.currentEnemies || [])
+      const aliveEnemies = enemies.filter(e => e.hp > 0)
+      
+      if (aliveEnemies.length === 0) return prev
+      
+      let newState = { ...prev }
+      let logMessages = []
+      
+      // 根据技能效果执行
+      if (skill.effects.heal) {
+        // 治疗技能
+        const healAmount = Math.floor(playerStats.maxHp * (skill.effects.healPercent || 0.5))
+        const newHp = Math.min(
+          (prev.playerHp ?? playerStats.maxHp) + healAmount,
+          playerStats.maxHp
+        )
+        newState.playerHp = newHp
+        logMessages.push(`💚 ${skill.name}！恢复 ${healAmount} 点生命值！`)
+      } else if (skill.effects.control && skill.effects.skipTurn) {
+        // 控制技能（变羊术等）
+        const target = targetEnemyId 
+          ? enemies.find(e => e.id === targetEnemyId)
+          : aliveEnemies[0]
+        
+        if (target) {
+          const skipTurns = { ...(prev.enemySkipTurns || {}) }
+          skipTurns[target.id] = (skipTurns[target.id] || 0) + skill.effects.skipTurn
+          newState.enemySkipTurns = skipTurns
+          logMessages.push(`🐑 ${skill.name}！${target.name}将跳过 ${skill.effects.skipTurn} 回合！`)
+        }
+      } else {
+        // 伤害技能
+        const damageMultiplier = skill.effects.damageMultiplier || 1.0
+        const baseDamage = Math.max(1, playerStats.attack)
+        const skillDamage = Math.floor(baseDamage * damageMultiplier)
+        
+        if (skill.effects.targetAll) {
+          // 群体伤害
+          let totalDamage = 0
+          aliveEnemies.forEach(enemy => {
+            const actualDamage = Math.max(1, skillDamage - enemy.defense)
+            const enemyIndex = enemies.findIndex(e => e.id === enemy.id)
+            if (enemyIndex >= 0) {
+              enemies[enemyIndex].hp = Math.max(0, enemy.hp - actualDamage)
+              totalDamage += actualDamage
+            }
+          })
+          logMessages.push(`🔥 ${skill.name}！对所有敌人造成 ${totalDamage} 点伤害！`)
+        } else {
+          // 单体或指定数量目标
+          const targetCount = skill.effects.targetCount || 1
+          const targets = targetEnemyId
+            ? [enemies.find(e => e.id === targetEnemyId)].filter(Boolean)
+            : aliveEnemies.slice(0, targetCount)
+          
+          targets.forEach(target => {
+            if (!target) return
+            const actualDamage = Math.max(1, skillDamage - target.defense)
+            const enemyIndex = enemies.findIndex(e => e.id === target.id)
+            if (enemyIndex >= 0) {
+              enemies[enemyIndex].hp = Math.max(0, target.hp - actualDamage)
+              logMessages.push(`⚡ ${skill.name}！对${target.name}造成 ${actualDamage} 点伤害！`)
+            }
+          })
+        }
+        
+        newState.currentEnemies = enemies
+        newState.currentMonster = enemies.find(e => e.hp > 0) || null
+      }
+      
+      // 设置冷却时间
+      const newCooldowns = { ...(prev.skillCooldowns || {}) }
+      newCooldowns[skillId] = skill.cooldown || 0
+      newState.skillCooldowns = newCooldowns
+      
+      // 更新日志
+      newState.battleLog = appendLog(prev.battleLog, ...logMessages)
+      
+      // 检查是否有敌人被击败
+      enemies.forEach(enemy => {
+        if (enemy.hp <= 0 && enemy.hp !== -1) {
+          enemy.hp = -1 // 标记为已处理
+          newState = handleEnemyDefeat(newState, enemy, enemies, playerStats)
+        }
+      })
+      
+      return newState
+    })
+  }, [calculatePlayerStats, handleEnemyDefeat])
+
+  // 技能冷却倒计时（每回合减少）
+  useEffect(() => {
+    if (!gameState.isAutoBattle && gameState.currentEnemies?.length > 0) {
+      // 在手动战斗时，冷却在攻击后减少
+      return
+    }
+    
+    const interval = setInterval(() => {
+      setGameState(prev => {
+        const cooldowns = { ...(prev.skillCooldowns || {}) }
+        let updated = false
+        
+        Object.keys(cooldowns).forEach(skillId => {
+          if (cooldowns[skillId] > 0) {
+            cooldowns[skillId] = Math.max(0, cooldowns[skillId] - 1)
+            updated = true
+          }
+        })
+        
+        if (!updated) return prev
+        
+        return {
+          ...prev,
+          skillCooldowns: cooldowns
+        }
+      })
+    }, 1000) // 每秒检查一次（在自动战斗中）
+    
+    return () => clearInterval(interval)
+  }, [gameState.isAutoBattle, gameState.currentEnemies])
+
+  // 复活功能（在线30分钟后可用）
+  const reviveAndContinueAutoBattle = useCallback(() => {
+    setGameState(prev => {
+      if (!prev.canRevive || prev.playerHp > 0) return prev
+      
+      const playerStats = calculatePlayerStats(prev)
+      const hasEnemies = hasAliveEnemies(prev.currentEnemies)
+      
+      let newState = {
+        ...prev,
+        playerHp: playerStats.maxHp,
+        isResting: false,
+        restProgress: 0,
+        canRevive: false, // 使用后重置
+        battleLog: appendLog(
+          prev.battleLog,
+          '✨ 复活成功！自动继续战斗！'
+        )
+      }
+      
+      // 如果没有敌人，生成新的敌人
+      if (!hasEnemies) {
+        newState = spawnEnemyWaveState(newState)
+      }
+      
+      // 自动继续战斗
+      newState.isAutoBattle = true
+      
+      return newState
+    })
+  }, [calculatePlayerStats])
+
+  // 领取离线收益
+  const claimOfflineRewards = useCallback(() => {
+    setGameState(prev => {
+      if (!prev.offlineRewards) return prev
+      
+      const rewards = prev.offlineRewards
+      let newState = { ...prev }
+      
+      // 应用经验
+      if (rewards.exp > 0) {
+        newState = applyExperience(newState, rewards.exp)
+      }
+      
+      // 添加装备
+      for (let i = 0; i < rewards.equipment; i++) {
+        const equipment = createEquipmentDrop(newState.currentStage || 1, false)
+        newState = addEquipmentToState(
+          newState,
+          equipment,
+          `离线获得：${equipment.name}`
+        )
+      }
+      
+      // 添加技能
+      for (let i = 0; i < rewards.skills; i++) {
+        const skill = getRandomSkillDrop()
+        newState = addSkillToState(
+          newState,
+          skill.id,
+          `离线获得技能：${skill.name}`
+        )
+      }
+      
+      // 更新图鉴（假设击杀的怪物是随机类型）
+      const monsterTypes = MONSTER_TYPES
+      for (let i = 0; i < Math.min(rewards.monstersKilled, 10); i++) {
+        const randomType = monsterTypes[Math.floor(Math.random() * monsterTypes.length)]
+        const bestiary = { ...(newState.bestiary || {}) }
+        const existingEntry = bestiary[randomType.id]
+        
+        if (existingEntry) {
+          bestiary[randomType.id] = {
+            ...existingEntry,
+            count: (existingEntry.count || 1) + 1
+          }
+        } else {
+          const attackBonus = Math.max(1, Math.floor(randomType.baseAttack * 0.1))
+          const defenseBonus = Math.max(1, Math.floor(randomType.baseDefense * 0.1))
+          bestiary[randomType.id] = {
+            collected: true,
+            count: 1,
+            bonusPerStack: {
+              attack: attackBonus,
+              defense: defenseBonus
+            }
+          }
+        }
+        newState.bestiary = bestiary
+      }
+      
+      // 清空离线收益
+      newState.offlineRewards = null
+      
+      return newState
+    })
+  }, [applyExperience])
+
+  // 注销账号（清空所有数据）
+  const resetAccount = useCallback(() => {
+    if (window.confirm('⚠️ 确定要注销账号吗？这将清空所有游戏数据，此操作不可恢复！')) {
+      localStorage.removeItem('gameState')
+      window.location.reload()
+    }
+  }, [])
+
   return {
     gameState,
     getPlayerStats,
@@ -926,6 +1384,11 @@ export const useGameState = () => {
     handleCheatCode,
     setAutoAdvance,
     equipSkill,
-    unequipSkill
+    unequipSkill,
+    performCheckIn,
+    castActiveSkill,
+    reviveAndContinueAutoBattle,
+    claimOfflineRewards,
+    resetAccount
   }
 }

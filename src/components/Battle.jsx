@@ -1,5 +1,6 @@
 import React from 'react'
 import { MONSTERS_PER_BOSS } from '../data/bosses'
+import { SKILL_MAP, SKILL_TYPE } from '../data/skills'
 import './Battle.css'
 
 const Battle = ({ 
@@ -11,7 +12,9 @@ const Battle = ({
   startAutoBattle,
   stopAutoBattle,
   startRest,
-  onStageClick
+  onStageClick,
+  castActiveSkill,
+  reviveAndContinueAutoBattle
 }) => {
   const playerStats = getPlayerStats()
   const enemies = gameState.currentEnemies || []
@@ -22,6 +25,13 @@ const Battle = ({
   const currentPlayerHp = gameState.playerHp ?? playerMaxHp
   const playerHp = Math.min(currentPlayerHp, playerMaxHp)
   const hpPercent = Math.max(0, Math.min(100, (playerHp / playerMaxHp) * 100))
+
+  // 获取已装备的主动技能
+  const equippedActiveSkills = (gameState.equippedSkills || [])
+    .map(skillId => SKILL_MAP[skillId])
+    .filter(skill => skill && skill.type === SKILL_TYPE.ACTIVE)
+  
+  const skillCooldowns = gameState.skillCooldowns || {}
 
   return (
     <div className="battle">
@@ -105,6 +115,31 @@ const Battle = ({
                   >
                     ⚔️ 攻击
                   </button>
+                  
+                  {/* 主动技能按钮 */}
+                  {equippedActiveSkills.length > 0 && (
+                    <div className="active-skills-container">
+                      {equippedActiveSkills.map(skill => {
+                        const cooldown = skillCooldowns[skill.id] || 0
+                        const canCast = cooldown === 0 && !gameState.isResting
+                        return (
+                          <button
+                            key={skill.id}
+                            className={`skill-btn ${canCast ? 'available' : 'on-cooldown'}`}
+                            onClick={() => canCast && castActiveSkill(skill.id)}
+                            disabled={!canCast}
+                            title={canCast ? skill.description : `冷却中 (${cooldown}回合)`}
+                          >
+                            <div className="skill-btn-name">{skill.name}</div>
+                            {cooldown > 0 && (
+                              <div className="skill-btn-cooldown">{cooldown}</div>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                  
                   <button 
                     className="auto-battle-btn" 
                     onClick={startAutoBattle}
@@ -146,13 +181,23 @@ const Battle = ({
               </div>
             </div>
           ) : (
-            <button 
-              className="rest-btn" 
-              onClick={startRest}
-              disabled={gameState.isAutoBattle || playerHp >= playerMaxHp}
-            >
-              💚 休息回血
-            </button>
+            <>
+              {playerHp <= 0 && gameState.canRevive && (
+                <button 
+                  className="revive-btn" 
+                  onClick={reviveAndContinueAutoBattle}
+                >
+                  ✨ 复活继续战斗
+                </button>
+              )}
+              <button 
+                className="rest-btn" 
+                onClick={startRest}
+                disabled={gameState.isAutoBattle || playerHp >= playerMaxHp}
+              >
+                💚 休息回血
+              </button>
+            </>
           )}
         </div>
 

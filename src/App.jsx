@@ -5,12 +5,15 @@ import Inventory from './components/Inventory'
 import Decompose from './components/Decompose'
 import Bestiary from './components/Bestiary'
 import Skills from './components/Skills'
+import DailyCheckIn from './components/DailyCheckIn'
+import OfflineRewards from './components/OfflineRewards'
 import StageSelect from './components/StageSelect'
 import './App.css'
 
 function App() {
   const [activePanel, setActivePanel] = useState('inventory')
   const [showStageSelect, setShowStageSelect] = useState(false)
+  const [showOfflineRewards, setShowOfflineRewards] = useState(false)
   const cheatStreakRef = useRef(0)
   const {
     gameState,
@@ -30,8 +33,25 @@ function App() {
     handleCheatCode,
     setAutoAdvance,
     equipSkill,
-    unequipSkill
+    unequipSkill,
+    performCheckIn,
+    castActiveSkill,
+    reviveAndContinueAutoBattle,
+    claimOfflineRewards,
+    resetAccount
   } = useGameState()
+
+  // 检查是否有离线收益
+  useEffect(() => {
+    if (gameState.offlineRewards) {
+      setShowOfflineRewards(true)
+    }
+  }, [gameState.offlineRewards])
+
+  const handleClaimOfflineRewards = () => {
+    claimOfflineRewards()
+    setShowOfflineRewards(false)
+  }
 
   const playerStats = getPlayerStats()
 
@@ -108,6 +128,8 @@ function App() {
             stopAutoBattle={stopAutoBattle}
             startRest={startRest}
             onStageClick={() => setShowStageSelect(true)}
+            castActiveSkill={castActiveSkill}
+            reviveAndContinueAutoBattle={reviveAndContinueAutoBattle}
           />
         </div>
 
@@ -128,6 +150,14 @@ function App() {
               />
             </div>
           </div>
+        )}
+
+        {showOfflineRewards && (
+          <OfflineRewards
+            offlineRewards={gameState.offlineRewards}
+            onClaim={handleClaimOfflineRewards}
+            onClose={() => setShowOfflineRewards(false)}
+          />
         )}
 
         <div className="panel-section">
@@ -159,6 +189,12 @@ function App() {
               unequipSkill={unequipSkill}
             />
           )}
+          {activePanel === 'checkin' && (
+            <DailyCheckIn
+              gameState={gameState}
+              performCheckIn={performCheckIn}
+            />
+          )}
         </div>
       </div>
 
@@ -188,6 +224,12 @@ function App() {
           ⚡ 技能
         </button>
         <button
+          className={`bottom-nav-btn ${activePanel === 'checkin' ? 'active' : ''}`}
+          onClick={() => setActivePanel('checkin')}
+        >
+          📅 签到
+        </button>
+        <button
           className="bottom-nav-btn"
           onClick={() => setShowStageSelect(true)}
         >
@@ -208,6 +250,13 @@ function App() {
             当前关卡
           </button>
         </div>
+        <button
+          className="bottom-nav-btn reset-btn"
+          onClick={resetAccount}
+          title="注销账号，清空所有数据"
+        >
+          🗑️ 注销
+        </button>
       </div>
     </div>
   )

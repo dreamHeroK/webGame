@@ -282,6 +282,57 @@
   width: 100%;
 }
 
+.active-skills-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 200px;
+}
+
+.skill-btn {
+  border: none;
+  border-radius: 10px;
+  padding: 10px 15px;
+  color: white;
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.3s;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.skill-btn.available {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.skill-btn.available:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.skill-btn.on-cooldown {
+  background: #6c757d;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.skill-btn-name {
+  font-size: 14px;
+}
+
+.skill-btn-cooldown {
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
 .attack-btn,
 .spawn-btn,
 .next-stage-btn,
@@ -326,7 +377,35 @@
 .rest-btn {
   background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
   font-size: 14px;
-  padding: 10px 20px;
+}
+
+.revive-btn {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  border: none;
+  border-radius: 12px;
+  padding: 15px 30px;
+  color: white;
+  font-size: 18px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.3s;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  min-width: 150px;
+  animation: pulse 2s infinite;
+}
+
+.revive-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 12px rgba(245, 87, 108, 0.6);
+}
+
+@keyframes pulse {
+  0%, 100% {
+    box-shadow: 0 4px 8px rgba(245, 87, 108, 0.4);
+  }
+  50% {
+    box-shadow: 0 4px 20px rgba(245, 87, 108, 0.8);
+  }
 }
 
 .attack-btn:hover:not(:disabled),
