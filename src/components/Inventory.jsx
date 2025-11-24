@@ -7,6 +7,8 @@ const Inventory = ({ gameState, equipItem, unequipItem, decomposeEquipment }) =>
   const [filterQuality, setFilterQuality] = useState('全部')
   const [sortBy, setSortBy] = useState('level') // level, quality, attack, defense
 
+  const slotEnhancements = gameState.slotEnhancements || {}
+
   // 过滤装备
   const filteredInventory = gameState.inventory.filter(equip => {
     if (filterSlot !== '全部' && equip.slot !== filterSlot) return false
@@ -55,6 +57,7 @@ const Inventory = ({ gameState, equipItem, unequipItem, decomposeEquipment }) =>
                     onClick={() => unequipItem(slot)}
                     title="点击卸下"
                   >
+                    <div className="enhancement-badge">+{slotEnhancements[slot] || 0}</div>
                     <div className="item-icon">{equipped.icon}</div>
                     <div className="item-name" style={{ color: getQualityColor(equipped.quality) }}>
                       {equipped.name}

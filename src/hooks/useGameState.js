@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { MONSTER_TYPES, getMonsterStats, randomMonsterType } from '../data/monsters'
 import { EQUIPMENT_SLOTS, generateEquipment } from '../data/equipment'
 import { getBossForStage, getBossStats, MONSTERS_PER_BOSS } from '../data/bosses'
@@ -17,6 +17,8 @@ const BASE_CRIT_RATE = 5
 const BASE_CRIT_DAMAGE = 150
 const BASE_MAX_EQUIPPED_SKILLS = 3
 const BOSS_MINION_COUNT = 2
+const ENHANCEMENT_BONUS_PER_LEVEL = 0.05 // 每级提升5%
+const ENHANCEMENT_COST_PER_LEVEL = 5 // 线性增长：下一等级 ×5
 
 // randomMonsterType 已从 monsters.js 导入
 
@@ -36,7 +38,21 @@ const createEnemyFromType = (monsterType, stage, overrides = {}) => {
   }
 }
 
+const DEFAULT_SLOT_ENHANCEMENTS = EQUIPMENT_SLOTS.reduce((acc, slot) => {
+  acc[slot] = 0
+  return acc
+}, {})
+
 const cloneEnemies = (enemies = []) => enemies.map(enemy => ({ ...enemy }))
+
+const getEnhancementMultiplier = (level = 0) => 1 + level * ENHANCEMENT_BONUS_PER_LEVEL
+const getEnhancementCost = (level = 0) => (level + 1) * ENHANCEMENT_COST_PER_LEVEL
+const getEnhancementStoneReward = (equipment) => {
+  if (!equipment) return 0
+  const qualityFactor = (equipment.qualityIndex ?? 0) + 1
+  const levelFactor = Math.max(1, Math.floor((equipment.level || 1) / 5) + 1)
+  return qualityFactor * levelFactor
+}
 
 const createEnemyWave = (stage, spawnBoss) => {
   if (spawnBoss) {
@@ -52,6 +68,27 @@ const createEnemyWave = (stage, spawnBoss) => {
   return Array.from({ length: count }, () =>
     createEnemyFromType(randomMonsterType(), stage)
   )
+}
+
+const awardEnhancementStones = (state, equipment, prefix = '') => {
+  const stones = getEnhancementStoneReward(equipment)
+  if (stones <= 0) {
+    return {
+      ...state,
+      battleLog: appendLog(
+        state.battleLog,
+        `${prefix}未获得强化石`
+      )
+    }
+  }
+  return {
+    ...state,
+    strengthenStones: (state.strengthenStones || 0) + stones,
+    battleLog: appendLog(
+      state.battleLog,
+      `${prefix}获得强化石 +${stones}`
+    )
+  }
 }
 
 const hasAliveEnemies = (enemies = []) => enemies.some(enemy => enemy.hp > 0)
@@ -77,10 +114,11 @@ const addEquipmentToState = (state, equipment, message) => {
     equipment.qualityIndex <= autoSettings.maxQuality &&
     equipment.level <= autoSettings.maxLevel
   ) {
-    return {
-      ...state,
-      battleLog: appendLog(state.battleLog, `${equipment.name}被自动分解`)
-    }
+    return awardEnhancementStones(
+      state,
+      equipment,
+      `⚙️ ${equipment.name}被自动分解，`
+    )
   }
 
   if ((state.inventory || []).length >= MAX_INVENTORY_SIZE) {
@@ -182,6 +220,8 @@ const initialState = {
   inventory: [],
   skillsInventory: {},
   equippedSkills: [],
+  strengthenStones: 0,
+  slotEnhancements: { ...DEFAULT_SLOT_ENHANCEMENTS },
   // 战斗相关
   currentStage: 1,
   maxStageReached: 1, // 已通关的最高关卡
@@ -280,6 +320,11 @@ export const useGameState = () => {
         currentEnemies: parsed.currentEnemies || (parsed.currentMonster ? [parsed.currentMonster] : []),
         skillsInventory: parsed.skillsInventory || initialState.skillsInventory,
         equippedSkills: parsed.equippedSkills || initialState.equippedSkills,
+        slotEnhancements: {
+          ...DEFAULT_SLOT_ENHANCEMENTS,
+          ...(parsed.slotEnhancements || {})
+        },
+        strengthenStones: parsed.strengthenStones || initialState.strengthenStones,
         checkIn: parsed.checkIn || initialState.checkIn,
         skillCooldowns: parsed.skillCooldowns || initialState.skillCooldowns,
         skillSlots: parsed.skillSlots || initialState.skillSlots,
@@ -296,10 +341,35 @@ export const useGameState = () => {
     return initialState
   })
 
+  const gameStateRef = useRef(gameState)
+  useEffect(() => {
+    gameStateRef.current = gameState
+  }, [gameState])
+
   // 保存游戏状态
   useEffect(() => {
     localStorage.setItem('gameState', JSON.stringify(gameState))
   }, [gameState])
+
+  // 监听页面关闭，记录离线开始时间
+  useEffect(() => {
+    const markOffline = () => {
+      const latestState = gameStateRef.current || initialState
+      const stateWithTimestamp = {
+        ...latestState,
+        lastOfflineTime: Date.now()
+      }
+      localStorage.setItem('gameState', JSON.stringify(stateWithTimestamp))
+    }
+
+    window.addEventListener('beforeunload', markOffline)
+    window.addEventListener('pagehide', markOffline)
+
+    return () => {
+      window.removeEventListener('beforeunload', markOffline)
+      window.removeEventListener('pagehide', markOffline)
+    }
+  }, [])
 
   // 在线时间跟踪
   useEffect(() => {
@@ -377,23 +447,29 @@ export const useGameState = () => {
     let bonusCritRate = Math.min(50, (level - 1) * 0.2)
     let bonusCritDamage = (level - 1) * 2
     
-    // 从已装备的装备计算属性
-    Object.values(state.equipped || {}).forEach(equip => {
+    const slotEnhancements = state.slotEnhancements || DEFAULT_SLOT_ENHANCEMENTS
+
+    // 从已装备的装备计算属性（包含强化加成）
+    Object.entries(state.equipped || {}).forEach(([slot, equip]) => {
       if (equip) {
-        totalAttack += equip.attack || 0
-        totalDefense += equip.defense || 0
-        bonusHp += equip.hp || 0
-        bonusCritRate += equip.critRate || 0
-        bonusCritDamage += equip.critDamage || 0
+        const enhancementLevel = slotEnhancements[slot] || 0
+        const enhancementMultiplier = getEnhancementMultiplier(enhancementLevel)
+
+        totalAttack += Math.floor((equip.attack || 0) * enhancementMultiplier)
+        totalDefense += Math.floor((equip.defense || 0) * enhancementMultiplier)
+        bonusHp += Math.floor((equip.hp || 0) * enhancementMultiplier)
+        bonusCritRate += Math.floor((equip.critRate || 0) * enhancementMultiplier)
+        bonusCritDamage += Math.floor((equip.critDamage || 0) * enhancementMultiplier)
         
         // 计算词条属性
         if (equip.affixes) {
           Object.entries(equip.affixes).forEach(([affixType, value]) => {
-            if (affixType === '攻击力') totalAttack += value
-            else if (affixType === '防御力') totalDefense += value
-            else if (affixType === '生命值') bonusHp += value
-            else if (affixType === '暴击率') bonusCritRate += value
-            else if (affixType === '暴击伤害') bonusCritDamage += value
+            const scaledValue = Math.floor(value * enhancementMultiplier)
+            if (affixType === '攻击力') totalAttack += scaledValue
+            else if (affixType === '防御力') totalDefense += scaledValue
+            else if (affixType === '生命值') bonusHp += scaledValue
+            else if (affixType === '暴击率') bonusCritRate += scaledValue
+            else if (affixType === '暴击伤害') bonusCritDamage += scaledValue
           })
         }
       }
@@ -515,21 +591,58 @@ export const useGameState = () => {
   // 分解装备
   const decomposeEquipment = useCallback((equipmentId) => {
     setGameState(prev => {
-      return {
+      const equipment = prev.inventory.find(eq => eq.id === equipmentId)
+      if (!equipment) return prev
+
+      const newInventory = prev.inventory.filter(eq => eq.id !== equipmentId)
+      let newState = {
         ...prev,
-        inventory: prev.inventory.filter(eq => eq.id !== equipmentId)
+        inventory: newInventory
       }
+
+      newState = awardEnhancementStones(
+        newState,
+        equipment,
+        `🔨 分解 ${equipment.name}，`
+      )
+
+      return newState
     })
   }, [])
 
   // 批量分解装备
   const decomposeEquipmentBatch = useCallback((maxQuality, maxLevel) => {
     setGameState(prev => {
+      const toDecompose = prev.inventory.filter(
+        eq => eq.qualityIndex <= maxQuality && eq.level <= maxLevel
+      )
+      if (toDecompose.length === 0) {
+        return prev
+      }
+
+      const remaining = prev.inventory.filter(
+        eq => !(eq.qualityIndex <= maxQuality && eq.level <= maxLevel)
+      )
+
+      const totalStones = toDecompose.reduce(
+        (sum, eq) => sum + getEnhancementStoneReward(eq),
+        0
+      )
+
+      let battleLog = appendLog(
+        prev.battleLog,
+        `🔨 批量分解 ${toDecompose.length} 件装备`
+      )
+      battleLog = appendLog(
+        battleLog,
+        `💎 获得强化石 +${totalStones}`
+      )
+
       return {
         ...prev,
-        inventory: prev.inventory.filter(eq => 
-          !(eq.qualityIndex <= maxQuality && eq.level <= maxLevel)
-        )
+        inventory: remaining,
+        strengthenStones: (prev.strengthenStones || 0) + totalStones,
+        battleLog
       }
     })
   }, [])
@@ -544,6 +657,28 @@ export const useGameState = () => {
         maxLevel
       }
     }))
+  }, [])
+
+  const strengthenSlot = useCallback((slot) => {
+    if (!EQUIPMENT_SLOTS.includes(slot)) return
+    setGameState(prev => {
+      const currentLevels = { ...(prev.slotEnhancements || DEFAULT_SLOT_ENHANCEMENTS) }
+      const currentLevel = currentLevels[slot] || 0
+      const cost = getEnhancementCost(currentLevel)
+      const stones = prev.strengthenStones || 0
+      if (stones < cost) return prev
+
+      currentLevels[slot] = currentLevel + 1
+      return {
+        ...prev,
+        slotEnhancements: currentLevels,
+        strengthenStones: stones - cost,
+        battleLog: appendLog(
+          prev.battleLog,
+          `🛠️ ${slot}强化至 +${currentLevel + 1}，消耗强化石 ${cost}`
+        )
+      }
+    })
   }, [])
 
   const addSkillToInventory = useCallback((skillId) => {
@@ -1450,6 +1585,7 @@ export const useGameState = () => {
     unequipSkill,
     performCheckIn,
     castActiveSkill,
+    strengthenSlot,
     reviveAndContinueAutoBattle,
     claimOfflineRewards,
     resetAccount

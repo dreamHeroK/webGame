@@ -28,6 +28,10 @@ const Decompose = ({ gameState, decomposeEquipmentBatch, setAutoDecompose }) => 
   return (
     <div className="decompose">
       <h2>装备分解</h2>
+      <div className="decompose-stats">
+        <span className="stat-label">当前强化石:</span>
+        <span className="stat-value">{(gameState.strengthenStones || 0).toLocaleString()}</span>
+      </div>
       
       {/* 自动分解设置 */}
       <div className="auto-decompose-section">
@@ -110,6 +114,7 @@ const Decompose = ({ gameState, decomposeEquipmentBatch, setAutoDecompose }) => 
         <ul>
           <li>自动分解：击败怪物获得的装备如果符合条件会自动分解，不会进入背包</li>
           <li>手动分解：可以批量分解背包中符合条件的所有装备</li>
+          <li>每件装备分解可获得一定数量的强化石，强化石用于提升装备部位效果</li>
           <li>分解后装备将永久消失，请谨慎操作</li>
         </ul>
       </div>

@@ -5,6 +5,7 @@ import Inventory from './components/Inventory'
 import Decompose from './components/Decompose'
 import Bestiary from './components/Bestiary'
 import Skills from './components/Skills'
+import Enhance from './components/Enhance'
 import DailyCheckIn from './components/DailyCheckIn'
 import OfflineRewards from './components/OfflineRewards'
 import StageSelect from './components/StageSelect'
@@ -36,6 +37,7 @@ function App() {
     unequipSkill,
     performCheckIn,
     castActiveSkill,
+    strengthenSlot,
     reviveAndContinueAutoBattle,
     claimOfflineRewards,
     resetAccount
@@ -189,6 +191,12 @@ function App() {
               unequipSkill={unequipSkill}
             />
           )}
+          {activePanel === 'enhance' && (
+            <Enhance
+              gameState={gameState}
+              strengthenSlot={strengthenSlot}
+            />
+          )}
           {activePanel === 'checkin' && (
             <DailyCheckIn
               gameState={gameState}
@@ -222,6 +230,12 @@ function App() {
           onClick={() => setActivePanel('skills')}
         >
           ⚡ 技能
+        </button>
+        <button
+          className={`bottom-nav-btn ${activePanel === 'enhance' ? 'active' : ''}`}
+          onClick={() => setActivePanel('enhance')}
+        >
+          🛠️ 强化
         </button>
         <button
           className={`bottom-nav-btn ${activePanel === 'checkin' ? 'active' : ''}`}
