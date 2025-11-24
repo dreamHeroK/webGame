@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { EQUIPMENT_SLOTS, EQUIPMENT_ICONS, getQualityColor } from '../data/equipment'
+import { EQUIPMENT_SLOTS, EQUIPMENT_ICONS, getQualityColor, EQUIPMENT_QUALITIES, AFFIX_BASE_VALUES } from '../data/equipment'
 import './Inventory.css'
 
 const Inventory = ({ gameState, equipItem, unequipItem, decomposeEquipment }) => {
@@ -8,6 +8,38 @@ const Inventory = ({ gameState, equipItem, unequipItem, decomposeEquipment }) =>
   const [sortBy, setSortBy] = useState('level') // level, quality, attack, defense
 
   const slotEnhancements = gameState.slotEnhancements || {}
+
+  const getAffixRange = (equip, affixType) => {
+    if (!equip) return null
+    const base = AFFIX_BASE_VALUES[affixType] || 1
+    const levelBase = 1 + ((equip.level || 1) - 1) * 0.1
+    const qualityMultiplier = EQUIPMENT_QUALITIES[equip.qualityIndex || 0]?.multiplier || 1
+    const min = Math.floor(base * levelBase * qualityMultiplier * 0.8)
+    const max = Math.floor(base * levelBase * qualityMultiplier * 1.2)
+    if (min === max) return `${min}`
+    return `${min}~${max}`
+  }
+
+  const buildEquipmentStats = (equip) => {
+    if (!equip) return []
+    const stats = []
+    if (equip.attack) stats.push({ icon: '⚔️', label: '攻击', value: equip.attack })
+    if (equip.defense) stats.push({ icon: '🛡️', label: '防御', value: equip.defense })
+    if (equip.hp) stats.push({ icon: '❤️', label: '生命', value: equip.hp })
+    if (equip.critRate) stats.push({ icon: '💥', label: '暴击率', value: `${equip.critRate}%` })
+    if (equip.critDamage) stats.push({ icon: '🔥', label: '暴击伤害', value: `${equip.critDamage}%` })
+    if (equip.affixes) {
+      Object.entries(equip.affixes).forEach(([affix, value]) => {
+        stats.push({
+          icon: '➕',
+          label: affix,
+          value: `+${value}`,
+          range: getAffixRange(equip, affix)
+        })
+      })
+    }
+    return stats
+  }
 
   // 过滤装备
   const filteredInventory = gameState.inventory.filter(equip => {
@@ -47,6 +79,7 @@ const Inventory = ({ gameState, equipItem, unequipItem, decomposeEquipment }) =>
         <div className="equipped-grid">
           {EQUIPMENT_SLOTS.map(slot => {
             const equipped = gameState.equipped[slot]
+            const tooltipStats = equipped ? buildEquipmentStats(equipped) : []
             return (
               <div key={slot} className="equipped-slot">
                 <div className="slot-label">{slot}</div>
@@ -55,7 +88,6 @@ const Inventory = ({ gameState, equipItem, unequipItem, decomposeEquipment }) =>
                     className="equipped-item"
                     style={{ borderColor: getQualityColor(equipped.quality) }}
                     onClick={() => unequipItem(slot)}
-                    title="点击卸下"
                   >
                     <div className="enhancement-badge">+{slotEnhancements[slot] || 0}</div>
                     <div className="item-icon">{equipped.icon}</div>
@@ -63,6 +95,26 @@ const Inventory = ({ gameState, equipItem, unequipItem, decomposeEquipment }) =>
                       {equipped.name}
                     </div>
                     <div className="item-level">Lv.{equipped.level}</div>
+                    <div className="equipped-tooltip">
+                      <div className="tooltip-name">{equipped.name}</div>
+                      <div className="tooltip-level">
+                        等级：Lv.{equipped.level} {slotEnhancements[slot] ? ` / 强化 +${slotEnhancements[slot]}` : ''}
+                      </div>
+                      <div className="tooltip-divider" />
+                      {tooltipStats.map((stat, index) => (
+                        <div key={index} className="tooltip-line">
+                          <span className="tooltip-icon">{stat.icon}</span>
+                          <span className="tooltip-label">{stat.label}：</span>
+                          <span className="tooltip-value">{stat.value}</span>
+                          {stat.range && (
+                            <span className="tooltip-range">({stat.range})</span>
+                          )}
+                        </div>
+                      ))}
+                      {tooltipStats.length === 0 && (
+                        <div className="tooltip-line empty">暂无属性</div>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <div className="empty-slot">
@@ -162,7 +214,7 @@ const Inventory = ({ gameState, equipItem, unequipItem, decomposeEquipment }) =>
                   )}
                   {equip.affixes && Object.entries(equip.affixes).map(([affix, value]) => (
                     <div key={affix} className="affix-line">
-                      {affix}: +{value}
+                      {affix}: +{value} ({getAffixRange(equip, affix)})
                     </div>
                   ))}
                 </div>

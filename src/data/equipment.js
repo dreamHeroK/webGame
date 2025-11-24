@@ -110,25 +110,25 @@ export const generateEquipment = (slot, level, minQualityIndex = 0) => {
 }
 
 // 计算词条数值
+export const AFFIX_BASE_VALUES = {
+  '攻击力': 5,
+  '防御力': 3,
+  '生命值': 20,
+  '暴击率': 1, // 百分比
+  '暴击伤害': 5, // 百分比
+  '穿透': 2,
+  '吸血': 1, // 百分比
+  '减伤': 1, // 百分比
+  '格挡': 1, // 百分比
+  '韧性': 1, // 百分比
+  '命中率': 2, // 百分比
+  '闪避': 1, // 百分比
+  '速度': 2
+}
+
 const calculateAffixValue = (affixType, level, qualityMultiplier) => {
   const levelBase = 1 + (level - 1) * 0.1
-  const baseValue = {
-    '攻击力': 5,
-    '防御力': 3,
-    '生命值': 20,
-    '暴击率': 1, // 百分比
-    '暴击伤害': 5, // 百分比
-    '穿透': 2,
-    '吸血': 1, // 百分比
-    '减伤': 1, // 百分比
-    '格挡': 1, // 百分比
-    '韧性': 1, // 百分比
-    '命中率': 2, // 百分比
-    '闪避': 1, // 百分比
-    '速度': 2
-  }
-  
-  const base = baseValue[affixType] || 1
+  const base = AFFIX_BASE_VALUES[affixType] || 1
   const value = Math.floor(base * levelBase * qualityMultiplier * (0.8 + Math.random() * 0.4)) // 80%-120%随机
   
   // 百分比属性返回整数，其他返回整数
