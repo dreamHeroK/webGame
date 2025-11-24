@@ -1,5 +1,6 @@
 import React from 'react'
 import { MONSTERS_PER_BOSS } from '../data/bosses'
+import { MONSTER_TYPES } from '../data/monsters'
 import { SKILL_MAP, SKILL_TYPE } from '../data/skills'
 import './Battle.css'
 
@@ -209,13 +210,16 @@ const Battle = ({
                 const isCurrentTarget = currentTarget && currentTarget.id === enemy.id
                 const enemyHpPercent = Math.max(0, Math.min(100, (enemy.hp / enemy.maxHp) * 100))
                 const isBoss = enemy.isBossLeader || gameState.isBoss
+                const monsterType = MONSTER_TYPES.find(m => m.id === enemy.typeId)
+                const isUltraRare = monsterType && monsterType.isUltraRare
                 
                 return (
                   <div 
                     key={enemy.id} 
-                    className={`character-card monster ${isCurrentTarget ? 'current-target' : ''} ${isBoss ? 'boss' : ''}`}
+                    className={`character-card monster ${isCurrentTarget ? 'current-target' : ''} ${isBoss ? 'boss' : ''} ${isUltraRare ? 'ultra-rare' : ''}`}
                   >
                     {isBoss && <div className="boss-label">BOSS</div>}
+                    {isUltraRare && <div className="ultra-rare-label">🌟 超稀有</div>}
                     {isCurrentTarget && <div className="target-indicator">🎯 目标</div>}
                     <div className="character-icon">{enemy.icon}</div>
                     <div className="character-name">{enemy.name}</div>

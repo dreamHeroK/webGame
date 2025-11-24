@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { MONSTER_TYPES, getMonsterStats } from '../data/monsters'
+import { MONSTER_TYPES, getMonsterStats, randomMonsterType } from '../data/monsters'
 import { EQUIPMENT_SLOTS, generateEquipment } from '../data/equipment'
 import { getBossForStage, getBossStats, MONSTERS_PER_BOSS } from '../data/bosses'
 import { SKILL_LIST, SKILL_MAP, getRandomSkillDrop, SKILL_DROP_RATE, SKILL_TYPE } from '../data/skills'
@@ -18,8 +18,7 @@ const BASE_CRIT_DAMAGE = 150
 const BASE_MAX_EQUIPPED_SKILLS = 3
 const BOSS_MINION_COUNT = 2
 
-const randomMonsterType = () =>
-  MONSTER_TYPES[Math.floor(Math.random() * MONSTER_TYPES.length)]
+// randomMonsterType 已从 monsters.js 导入
 
 const createEnemyFromType = (monsterType, stage, overrides = {}) => {
   const stats = getMonsterStats(monsterType, stage)
@@ -214,6 +213,14 @@ const initialState = {
     attack: 0,
     defense: 0
   },
+  // 超稀有怪物奖励（永久属性加成）
+  ultraRareBonus: {
+    attack: 0,
+    defense: 0,
+    hp: 0,
+    critRate: 0,
+    critDamage: 0
+  },
   // 签到系统
   checkIn: {
     lastCheckInDate: null,
@@ -282,7 +289,8 @@ export const useGameState = () => {
         lastOnlineTime: parsed.lastOnlineTime || initialState.lastOnlineTime,
         canRevive: parsed.canRevive || initialState.canRevive,
         lastOfflineTime: parsed.lastOfflineTime || initialState.lastOfflineTime,
-        offlineRewards: parsed.offlineRewards || initialState.offlineRewards
+        offlineRewards: parsed.offlineRewards || initialState.offlineRewards,
+        ultraRareBonus: parsed.ultraRareBonus || initialState.ultraRareBonus
       }
     }
     return initialState
@@ -414,6 +422,15 @@ export const useGameState = () => {
       bonusHp += state.checkIn.bonus.hp || 0
       bonusCritRate += state.checkIn.bonus.critRate || 0
       bonusCritDamage += state.checkIn.bonus.critDamage || 0
+    }
+
+    // 超稀有怪物奖励加成（永久属性）
+    if (state.ultraRareBonus) {
+      totalAttack += state.ultraRareBonus.attack || 0
+      totalDefense += state.ultraRareBonus.defense || 0
+      bonusHp += state.ultraRareBonus.hp || 0
+      bonusCritRate += state.ultraRareBonus.critRate || 0
+      bonusCritDamage += state.ultraRareBonus.critDamage || 0
     }
 
     // 被动技能加成（只计算被动技能）
@@ -623,9 +640,15 @@ export const useGameState = () => {
       let newState = { ...state }
       const stage = newState.currentStage || 1
 
-      const dropRate = enemy.isBossLeader ? 0.8 : EQUIPMENT_DROP_RATE
+      // 检查是否为超稀有怪物
+      const monsterType = MONSTER_TYPES.find(m => m.id === enemy.typeId)
+      const isUltraRare = monsterType && monsterType.isUltraRare
+
+      // 超稀有怪物必定掉落装备和技能，且掉落高品质装备
+      const dropRate = enemy.isBossLeader ? 0.8 : (isUltraRare ? 1 : EQUIPMENT_DROP_RATE)
       if (Math.random() <= dropRate) {
-        const equipment = createEquipmentDrop(stage, enemy.isBossLeader ? 3 : 0)
+        const minQuality = enemy.isBossLeader ? 3 : (isUltraRare ? 4 : 0) // 超稀有怪物至少掉落传说品质
+        const equipment = createEquipmentDrop(stage, minQuality)
         newState = addEquipmentToState(
           newState,
           equipment,
@@ -638,12 +661,41 @@ export const useGameState = () => {
         }
       }
 
-      if (Math.random() <= SKILL_DROP_RATE) {
+      // 超稀有怪物必定掉落技能
+      const skillDropRate = isUltraRare ? 1 : SKILL_DROP_RATE
+      if (Math.random() <= skillDropRate) {
         const skill = getRandomSkillDrop()
         newState = addSkillToState(
           newState,
           skill.id,
           `📘 获得技能：${skill.name}`
+        )
+      }
+
+      // 超稀有怪物掉落稀有属性（永久加成）
+      if (isUltraRare && monsterType.rareDrop) {
+        const rareDrop = monsterType.rareDrop
+        const ultraRareBonus = { ...(newState.ultraRareBonus || {}) }
+        
+        ultraRareBonus.attack = (ultraRareBonus.attack || 0) + (rareDrop.attack || 0)
+        ultraRareBonus.defense = (ultraRareBonus.defense || 0) + (rareDrop.defense || 0)
+        ultraRareBonus.hp = (ultraRareBonus.hp || 0) + (rareDrop.hp || 0)
+        ultraRareBonus.critRate = (ultraRareBonus.critRate || 0) + (rareDrop.critRate || 0)
+        ultraRareBonus.critDamage = (ultraRareBonus.critDamage || 0) + (rareDrop.critDamage || 0)
+        
+        newState.ultraRareBonus = ultraRareBonus
+        
+        const bonusText = [
+          rareDrop.attack ? `攻击+${rareDrop.attack}` : '',
+          rareDrop.defense ? `防御+${rareDrop.defense}` : '',
+          rareDrop.hp ? `生命+${rareDrop.hp}` : '',
+          rareDrop.critRate ? `暴击率+${rareDrop.critRate}%` : '',
+          rareDrop.critDamage ? `暴击伤害+${rareDrop.critDamage}%` : ''
+        ].filter(Boolean).join('、')
+        
+        newState.battleLog = appendLog(
+          newState.battleLog,
+          `🌟 击败超稀有怪物${enemy.name}！获得永久属性加成：${bonusText}！`
         )
       }
 
@@ -799,9 +851,10 @@ export const useGameState = () => {
       const skill = SKILL_MAP[skillId]
       return skill && skill.type === SKILL_TYPE.PASSIVE && skill.effects?.multiTarget
     })
+    const multiShotData = multiShotSkill ? SKILL_MAP[multiShotSkill] : null
     
-    const multiTargetCount = multiShotSkill 
-      ? (SKILL_MAP[multiShotSkill].effects.multiTargetCount || 3)
+    const multiTargetCount = multiShotData 
+      ? (multiShotData.effects.multiTargetCount || 3)
       : 1
     
     // 选择目标（多重箭攻击多个目标）
@@ -810,6 +863,7 @@ export const useGameState = () => {
     
     let totalDamage = 0
     let logMessages = []
+    const attackLabel = multiShotData ? `【被动·${multiShotData.name}】` : '【普通攻击】'
     
     // 对每个目标造成伤害
     targets.forEach(target => {
@@ -830,7 +884,7 @@ export const useGameState = () => {
       totalDamage += damage
       
       logMessages.push(
-        `你对${target.name}造成了${damage}点伤害${didCrit ? ' (暴击!)' : ''}！`
+        `${attackLabel}你对${target.name}造成了${damage}点伤害${didCrit ? ' (暴击!)' : ''}！`
       )
     })
     
@@ -842,12 +896,17 @@ export const useGameState = () => {
       }
     })
     
+    let logState = prev.battleLog
+    logMessages.forEach(msg => {
+      logState = appendLog(logState, msg)
+    })
+
     let newState = {
       ...prev,
       currentEnemies: enemies,
       currentMonster: enemies.find(enemy => enemy.hp > 0) || null,
       skillCooldowns: newCooldowns,
-      battleLog: appendLog(prev.battleLog, ...logMessages)
+      battleLog: logState
     }
     
     // 检查是否有敌人被击败
@@ -1155,7 +1214,7 @@ export const useGameState = () => {
           playerStats.maxHp
         )
         newState.playerHp = newHp
-        logMessages.push(`💚 ${skill.name}！恢复 ${healAmount} 点生命值！`)
+        logMessages.push(`【主动技能·${skill.name}】💚 恢复 ${healAmount} 点生命值！`)
       } else if (skill.effects.control && skill.effects.skipTurn) {
         // 控制技能（变羊术等）
         const target = targetEnemyId 
@@ -1166,7 +1225,7 @@ export const useGameState = () => {
           const skipTurns = { ...(prev.enemySkipTurns || {}) }
           skipTurns[target.id] = (skipTurns[target.id] || 0) + skill.effects.skipTurn
           newState.enemySkipTurns = skipTurns
-          logMessages.push(`🐑 ${skill.name}！${target.name}将跳过 ${skill.effects.skipTurn} 回合！`)
+          logMessages.push(`【主动技能·${skill.name}】🐑 ${target.name}将跳过 ${skill.effects.skipTurn} 回合！`)
         }
       } else {
         // 伤害技能
@@ -1185,7 +1244,7 @@ export const useGameState = () => {
               totalDamage += actualDamage
             }
           })
-          logMessages.push(`🔥 ${skill.name}！对所有敌人造成 ${totalDamage} 点伤害！`)
+          logMessages.push(`【主动技能·${skill.name}】🔥 对所有敌人造成 ${totalDamage} 点伤害！`)
         } else {
           // 单体或指定数量目标
           const targetCount = skill.effects.targetCount || 1
@@ -1199,7 +1258,7 @@ export const useGameState = () => {
             const enemyIndex = enemies.findIndex(e => e.id === target.id)
             if (enemyIndex >= 0) {
               enemies[enemyIndex].hp = Math.max(0, target.hp - actualDamage)
-              logMessages.push(`⚡ ${skill.name}！对${target.name}造成 ${actualDamage} 点伤害！`)
+              logMessages.push(`【主动技能·${skill.name}】⚡ 对${target.name}造成 ${actualDamage} 点伤害！`)
             }
           })
         }
@@ -1214,7 +1273,11 @@ export const useGameState = () => {
       newState.skillCooldowns = newCooldowns
       
       // 更新日志
-      newState.battleLog = appendLog(prev.battleLog, ...logMessages)
+      let updatedLog = prev.battleLog
+      logMessages.forEach(msg => {
+        updatedLog = appendLog(updatedLog, msg)
+      })
+      newState.battleLog = updatedLog
       
       // 检查是否有敌人被击败
       enemies.forEach(enemy => {

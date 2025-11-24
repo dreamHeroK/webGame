@@ -55,6 +55,20 @@ export const MONSTER_SKILLS = {
     trigger: 'active',
     cooldown: 5,
     effect: { damageMultiplier: 3.0, targetAll: true, element: 'holy' }
+  },
+  legendary_beast: {
+    name: '时空裂隙',
+    description: '每次攻击有50%概率造成3倍伤害并恢复50%生命值',
+    trigger: 'attack',
+    chance: 0.5,
+    effect: { damageMultiplier: 3.0, lifesteal: 0.5 }
+  },
+  ancient_dragon: {
+    name: '混沌之力',
+    description: '每2回合对所有敌人造成400%攻击力的混沌伤害',
+    trigger: 'active',
+    cooldown: 2,
+    effect: { damageMultiplier: 4.0, targetAll: true, element: 'chaos' }
   }
 }
 
@@ -155,6 +169,49 @@ export const MONSTER_TYPES = [
     critDamage: 200,
     dropRate: 0.03,
     innateSkill: MONSTER_SKILLS.god
+  },
+  // 超稀有怪物
+  {
+    id: 'legendary_beast',
+    name: '传说巨兽',
+    icon: '🌟',
+    baseHp: 5000,
+    baseAttack: 500,
+    baseDefense: 200,
+    critRate: 20,
+    critDamage: 300,
+    dropRate: 1,
+    isUltraRare: true, // 标记为超稀有
+    spawnRate: 0.01, // 1%出现率
+    innateSkill: MONSTER_SKILLS.legendary_beast,
+    rareDrop: {
+      attack: 100,
+      defense: 100,
+      critRate: 5,
+      critDamage: 50,
+      hp: 1000
+    }
+  },
+  {
+    id: 'ancient_dragon',
+    name: '远古巨龙',
+    icon: '💫',
+    baseHp: 8000,
+    baseAttack: 800,
+    baseDefense: 300,
+    critRate: 25,
+    critDamage: 350,
+    dropRate: 1,
+    isUltraRare: true, // 标记为超稀有
+    spawnRate: 0.008, // 0.8%出现率
+    innateSkill: MONSTER_SKILLS.ancient_dragon,
+    rareDrop: {
+      attack: 200,
+      defense: 200,
+      critRate: 10,
+      critDamage: 100,
+      hp: 2000
+    }
   }
 ]
 
@@ -171,5 +228,28 @@ export const getMonsterStats = (monster, stage) => {
   }
 }
 
-// 怪物掉落已改为装备掉落，由战斗系统处理
+// 获取普通怪物列表（排除超稀有怪物）
+export const getNormalMonsters = () => {
+  return MONSTER_TYPES.filter(monster => !monster.isUltraRare)
+}
+
+// 获取超稀有怪物列表
+export const getUltraRareMonsters = () => {
+  return MONSTER_TYPES.filter(monster => monster.isUltraRare)
+}
+
+// 随机选择怪物类型（考虑超稀有怪物的低出现率）
+export const randomMonsterType = () => {
+  // 先检查是否出现超稀有怪物
+  const ultraRareMonsters = getUltraRareMonsters()
+  for (const rareMonster of ultraRareMonsters) {
+    if (Math.random() < rareMonster.spawnRate) {
+      return rareMonster
+    }
+  }
+  
+  // 如果没有出现超稀有怪物，从普通怪物中随机选择
+  const normalMonsters = getNormalMonsters()
+  return normalMonsters[Math.floor(Math.random() * normalMonsters.length)]
+}
 

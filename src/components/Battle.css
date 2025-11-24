@@ -176,6 +176,27 @@
   border: 4px solid #ffc107 !important;
 }
 
+.character-card.monster.ultra-rare {
+  border: 4px solid #ffd700 !important;
+  background: linear-gradient(135deg, #fff9e6 0%, #ffe6cc 100%);
+  box-shadow: 0 0 20px rgba(255, 215, 0, 0.6);
+  animation: ultraRareGlow 2s infinite;
+}
+
+.character-card.monster.ultra-rare.current-target {
+  border: 5px solid #ffd700 !important;
+  box-shadow: 0 0 30px rgba(255, 215, 0, 0.8);
+}
+
+@keyframes ultraRareGlow {
+  0%, 100% {
+    box-shadow: 0 0 20px rgba(255, 215, 0, 0.6);
+  }
+  50% {
+    box-shadow: 0 0 40px rgba(255, 215, 0, 1);
+  }
+}
+
 .boss-label {
   position: absolute;
   top: 8px;
@@ -187,6 +208,33 @@
   font-size: 10px;
   font-weight: bold;
   animation: pulse 2s infinite;
+  z-index: 10;
+}
+
+.ultra-rare-label {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background: linear-gradient(135deg, #ffd700 0%, #ffed4e 100%);
+  color: #333;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 10px;
+  font-weight: bold;
+  animation: ultraRarePulse 1.5s infinite;
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(255, 215, 0, 0.5);
+}
+
+@keyframes ultraRarePulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 2px 8px rgba(255, 215, 0, 0.5);
+  }
+  50% {
+    transform: scale(1.1);
+    box-shadow: 0 4px 16px rgba(255, 215, 0, 0.8);
+  }
 }
 
 .target-indicator {
