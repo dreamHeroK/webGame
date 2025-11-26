@@ -24,5 +24,8 @@ const getBasePath = () => {
 export default defineConfig({
   plugins: [react()],
   base: getBasePath(),
+  build: {
+    outDir: 'docs',  // GitHub Pages 使用 /docs 目录
+  },
 })
 
